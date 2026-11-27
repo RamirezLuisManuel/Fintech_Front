@@ -45,16 +45,19 @@ class GestoPagoProductModel {
 
   /// Determina si el producto está disponible para compra según las reglas del backend
   bool get isAvailableForPurchase =>
-      tipoFront == 1 || tipoFront == 2 || tipoFront == 4;
+      tipoFront != null && const [1, 2, 4, 5, 30, 40].contains(tipoFront);
 
-  /// Determina si es de monto fijo (recargas / tarjetas) o monto libre (recibos)
+  /// Determina si es un pin/tarjeta digital de monto fijo que no solicita teléfono/referencia
+  bool get isDigitalPinWithoutReference =>
+      tipoFront == 1 && (idCatTipoServicio == 10 || idCatTipoServicio == 11);
+
+  /// Determina si es de monto fijo (recargas / tarjetas) o monto libre (recibos / envíos)
   bool get isFixedAmount => tipoFront == 1 && precio > 0;
 
   /// Determina si requiere número de teléfono a 10 dígitos
   bool get requiresPhoneNumber =>
       tipoFront == 1 &&
-      idCatTipoServicio != 10 &&
-      idCatTipoServicio != 11 &&
+      !isDigitalPinWithoutReference &&
       (tipoReferencia == null || tipoReferencia!.toLowerCase() == 'a');
 
   /// Categoría calculada para organizar el catálogo
@@ -112,6 +115,9 @@ class GestoPagoProductModel {
     }
     if (tipoFront == 1) {
       return 'Acreditación electrónica inmediata para $servicio ($producto).';
+    }
+    if (tipoFront == 30 || tipoFront == 40) {
+      return 'Envío de dinero y transferencia referenciada para $servicio ($producto).';
     }
     return 'Pago de servicio referenciado para $servicio - $producto.';
   }
