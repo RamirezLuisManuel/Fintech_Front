@@ -1,10 +1,8 @@
-import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
-import 'package:flutter/services.dart';
 import '../services/api_service.dart';
 import '../utils/security_validators.dart';
-import 'home_shell_screen.dart';
 import 'register_screen.dart';
+import 'two_factor_screen.dart';
 
 class LoginScreen extends StatefulWidget {
   final String? initialAlertMessage;
@@ -46,7 +44,7 @@ class _LoginScreenState extends State<LoginScreen> {
         shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
         title: const Row(
           children: [
-            Icon(Icons.gpp_maybe_rounded, color: Color(0xFFDC2626), size: 28),
+            Icon(Icons.gpp_maybe_rounded, color: Color(0xFFB85042), size: 28),
             SizedBox(width: 10),
             Expanded(
               child: Text(
@@ -102,13 +100,17 @@ class _LoginScreenState extends State<LoginScreen> {
       return;
     }
 
-    // Mostrar modal de Segundo Factor de Autenticación (2FA)
-    _showTwoFactorDialog(
-      correo: email,
-      password: password,
-      hintMessage: (data['mensaje2fa'] ??
-              'Ingresa tu PIN de seguridad (4 dígitos) o el código OTP (6 dígitos) enviado a tu correo.')
-          .toString(),
+    // Navegar a la nueva pantalla de Verificación de Doble Factor (2FA)
+    Navigator.of(context).push(
+      MaterialPageRoute(
+        builder: (_) => TwoFactorScreen(
+          correo: email,
+          password: password,
+          hintMessage: (data['mensaje2fa'] ??
+                  'Ingresa tu código de 6 dígitos de Google Authenticator o tu PIN de 4 dígitos.')
+              .toString(),
+        ),
+      ),
     );
   }
 
@@ -116,293 +118,130 @@ class _LoginScreenState extends State<LoginScreen> {
     showDialog(
       context: context,
       barrierDismissible: false,
-      builder: (ctx) => AlertDialog(
-        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
-        title: const Row(
-          children: [
-            Icon(Icons.devices_other_rounded, color: Color(0xFFD97706), size: 30),
-            SizedBox(width: 12),
-            Expanded(
-              child: Text(
-                'Sesión Activa Detectada',
-                style: TextStyle(fontWeight: FontWeight.bold, fontSize: 19),
-              ),
-            ),
-          ],
-        ),
-        content: Column(
-          mainAxisSize: MainAxisSize.min,
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Text(
-              infoMessage,
-              style: const TextStyle(fontSize: 14.5, height: 1.45),
-            ),
-            const SizedBox(height: 14),
-            Container(
-              padding: const EdgeInsets.all(12),
-              decoration: BoxDecoration(
-                color: const Color(0xFFFEF3C7),
-                borderRadius: BorderRadius.circular(12),
-                border: Border.all(color: const Color(0xFFF59E0B)),
-              ),
-              child: const Row(
-                children: [
-                  Icon(Icons.security_rounded, color: Color(0xFFB45309), size: 20),
-                  SizedBox(width: 10),
-                  Expanded(
-                    child: Text(
-                      'Política de Seguridad: Un usuario no puede mantener dos sesiones activas simultáneamente en Web y Móvil.',
-                      style: TextStyle(
-                        fontSize: 12.5,
-                        color: Color(0xFF92400E),
-                        fontWeight: FontWeight.w600,
-                      ),
-                    ),
-                  ),
-                ],
-              ),
-            ),
-          ],
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.of(ctx).pop(),
-            child: const Text('Cancelar'),
-          ),
-          FilledButton.icon(
-            onPressed: () {
-              Navigator.of(ctx).pop();
-              _initiateLogin(forceClosePrevious: true);
-            },
-            style: FilledButton.styleFrom(
-              backgroundColor: const Color(0xFFD97706),
-            ),
-            icon: const Icon(Icons.logout_rounded, size: 18),
-            label: const Text('Cerrar sesión anterior y continuar'),
-          ),
-        ],
-      ),
-    );
-  }
-
-  void _showTwoFactorDialog({
-    required String correo,
-    required String password,
-    required String hintMessage,
-  }) {
-    final codeCtrl = TextEditingController();
-    final dialogFormKey = GlobalKey<FormState>();
-    bool verifying = false;
-    String? dialogError;
-
-    showDialog(
-      context: context,
-      barrierDismissible: false,
-      builder: (ctx) => StatefulBuilder(
-        builder: (ctx, setModalState) => AlertDialog(
-          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(22)),
-          title: const Row(
+      builder: (ctx) => Dialog(
+        backgroundColor: Colors.white,
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(22)),
+        clipBehavior: Clip.antiAlias,
+        child: ConstrainedBox(
+          constraints: const BoxConstraints(maxWidth: 400),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.stretch,
             children: [
-              Icon(Icons.verified_user_rounded, color: Color(0xFF0F766E), size: 28),
-              SizedBox(width: 10),
-              Expanded(
-                child: Text(
-                  'Verificación de Doble Factor (2FA)',
-                  style: TextStyle(fontWeight: FontWeight.bold, fontSize: 18),
-                ),
-              ),
-            ],
-          ),
-          content: ConstrainedBox(
-            constraints: const BoxConstraints(maxWidth: 400),
-            child: Form(
-              key: dialogFormKey,
-              child: Column(
-                mainAxisSize: MainAxisSize.min,
-                crossAxisAlignment: CrossAxisAlignment.stretch,
-                children: [
-                  Text(
-                    hintMessage,
-                    style: const TextStyle(fontSize: 14, color: Color(0xFF475569), height: 1.4),
-                  ),
-                  const SizedBox(height: 18),
-                  TextFormField(
-                    controller: codeCtrl,
-                    autofocus: true,
-                    keyboardType: TextInputType.number,
-                    textAlign: TextAlign.center,
-                    maxLength: 6,
-                    obscureText: true,
-                    style: const TextStyle(
-                      fontSize: 22,
-                      letterSpacing: 8,
-                      fontWeight: FontWeight.bold,
-                    ),
-                    inputFormatters: [FilteringTextInputFormatter.digitsOnly],
-                    validator: (v) => SecurityValidators.validate2faOrPin(v),
-                    decoration: InputDecoration(
-                      labelText: 'Código 2FA (OTP o PIN de 4 dígitos)',
-                      counterText: '',
-                      prefixIcon: const Icon(Icons.pin_rounded),
-                      filled: true,
-                      fillColor: const Color(0xFFF8FAFC),
-                      border: OutlineInputBorder(
+              Container(
+                padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 22),
+                color: const Color(0xFF0F172A),
+                child: Column(
+                  children: [
+                    Container(
+                      width: 48,
+                      height: 48,
+                      decoration: BoxDecoration(
+                        color: Colors.white.withValues(alpha: 0.12),
                         borderRadius: BorderRadius.circular(14),
                       ),
-                    ),
-                  ),
-                  if (dialogError != null) ...[
-                    const SizedBox(height: 12),
-                    Container(
-                      padding: const EdgeInsets.all(10),
-                      decoration: BoxDecoration(
-                        color: const Color(0xFFFEE2E2),
-                        borderRadius: BorderRadius.circular(10),
+                      child: const Icon(
+                        Icons.devices_other_rounded,
+                        color: Color(0xFF38BDF8),
+                        size: 26,
                       ),
-                      child: Row(
+                    ),
+                    const SizedBox(height: 12),
+                    const Text(
+                      'Sesión Activa Detectada',
+                      textAlign: TextAlign.center,
+                      style: TextStyle(
+                        color: Colors.white,
+                        fontWeight: FontWeight.bold,
+                        fontSize: 18,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+              Padding(
+                padding: const EdgeInsets.all(24),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.stretch,
+                  children: [
+                    const Text(
+                      'Tu cuenta ya está abierta en otro dispositivo. Si continúas aquí, la sesión anterior se cerrará de inmediato.',
+                      textAlign: TextAlign.center,
+                      style: TextStyle(
+                        fontSize: 14,
+                        color: Color(0xFF334155),
+                        height: 1.45,
+                      ),
+                    ),
+                    const SizedBox(height: 16),
+                    Container(
+                      padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+                      decoration: BoxDecoration(
+                        color: const Color(0xFFF8FAFC),
+                        borderRadius: BorderRadius.circular(12),
+                        border: Border.all(color: const Color(0xFFE2E8F0)),
+                      ),
+                      child: const Row(
+                        mainAxisAlignment: MainAxisAlignment.center,
                         children: [
-                          const Icon(Icons.error_outline, color: Color(0xFFDC2626), size: 18),
-                          const SizedBox(width: 8),
-                          Expanded(
+                          Icon(Icons.verified_user_outlined, color: Color(0xFF0F172A), size: 17),
+                          SizedBox(width: 8),
+                          Flexible(
                             child: Text(
-                              dialogError!,
-                              style: const TextStyle(
-                                color: Color(0xFFB91C1C),
-                                fontSize: 13,
-                                fontWeight: FontWeight.w500,
+                              'Control de sesión única activo',
+                              style: TextStyle(
+                                fontSize: 12.5,
+                                fontWeight: FontWeight.w600,
+                                color: Color(0xFF0F172A),
                               ),
                             ),
                           ),
                         ],
                       ),
                     ),
-                  ],
-                ],
-              ),
-            ),
-          ),
-          actions: [
-            TextButton(
-              onPressed: verifying ? null : () => Navigator.of(ctx).pop(),
-              child: const Text('Cancelar'),
-            ),
-            FilledButton.icon(
-              onPressed: verifying
-                  ? null
-                  : () async {
-                      if (!dialogFormKey.currentState!.validate()) return;
-                      setModalState(() {
-                        verifying = true;
-                        dialogError = null;
-                      });
-
-                      final verifyRes = await ApiService.verify2faAndLogin(
-                        correo: correo,
-                        password: password,
-                        codigo2fa: codeCtrl.text,
-                      );
-
-                      if (!ctx.mounted) return;
-                      if (verifyRes.success) {
-                        Navigator.of(ctx).pop();
-                        if (!mounted) return;
-                        Navigator.of(context).pushReplacement(
-                          MaterialPageRoute(
-                            builder: (_) => const HomeShellScreen(),
+                    const SizedBox(height: 22),
+                    Row(
+                      children: [
+                        Expanded(
+                          child: OutlinedButton(
+                            onPressed: () => Navigator.of(ctx).pop(),
+                            style: OutlinedButton.styleFrom(
+                              foregroundColor: const Color(0xFF0F172A),
+                              side: const BorderSide(color: Color(0xFFCBD5E1)),
+                              padding: const EdgeInsets.symmetric(vertical: 13),
+                              shape: RoundedRectangleBorder(
+                                borderRadius: BorderRadius.circular(12),
+                              ),
+                            ),
+                            child: const Text('Cancelar', style: TextStyle(fontWeight: FontWeight.w600)),
                           ),
-                        );
-                      } else {
-                        setModalState(() {
-                          verifying = false;
-                          dialogError = verifyRes.message;
-                        });
-                      }
-                    },
-              style: FilledButton.styleFrom(
-                backgroundColor: const Color(0xFF0F766E),
-                padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 12),
-              ),
-              icon: verifying
-                  ? const SizedBox(
-                      width: 16,
-                      height: 16,
-                      child: CircularProgressIndicator(
-                        color: Colors.white,
-                        strokeWidth: 2,
-                      ),
-                    )
-                  : const Icon(Icons.check_circle_outline_rounded, size: 18),
-              label: Text(verifying ? 'Validando...' : 'Verificar e Ingresar'),
-            ),
-          ],
-        ),
-      ),
-    );
-  }
-
-  void _showServerSettingsDialog() {
-    final hostCtrl = TextEditingController(text: ApiService.baseHost);
-    showDialog(
-      context: context,
-      builder: (ctx) => AlertDialog(
-        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(18)),
-        title: const Row(
-          children: [
-            Icon(Icons.dns_rounded, color: Color(0xFF1E3A8A)),
-            SizedBox(width: 10),
-            Text('Servidor Backend REST', style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
-          ],
-        ),
-        content: Column(
-          mainAxisSize: MainAxisSize.min,
-          crossAxisAlignment: CrossAxisAlignment.stretch,
-          children: [
-            const Text(
-              'Configura la dirección del servidor Spring Boot:',
-              style: TextStyle(fontSize: 13.5, color: Color(0xFF475569)),
-            ),
-            const SizedBox(height: 12),
-            TextField(
-              controller: hostCtrl,
-              decoration: InputDecoration(
-                labelText: 'URL Base del Servidor',
-                hintText: 'http://localhost:9090',
-                border: OutlineInputBorder(borderRadius: BorderRadius.circular(12)),
-              ),
-            ),
-            const SizedBox(height: 12),
-            Wrap(
-              spacing: 8,
-              runSpacing: 8,
-              children: [
-                ActionChip(
-                  label: const Text('Web / Localhost (9090)'),
-                  onPressed: () => hostCtrl.text = 'http://localhost:9090',
+                        ),
+                        const SizedBox(width: 12),
+                        Expanded(
+                          child: FilledButton(
+                            onPressed: () {
+                              Navigator.of(ctx).pop();
+                              _initiateLogin(forceClosePrevious: true);
+                            },
+                            style: FilledButton.styleFrom(
+                              backgroundColor: const Color(0xFF0F172A),
+                              foregroundColor: Colors.white,
+                              padding: const EdgeInsets.symmetric(vertical: 13),
+                              shape: RoundedRectangleBorder(
+                                borderRadius: BorderRadius.circular(12),
+                              ),
+                            ),
+                            child: const Text('Continuar aquí', style: TextStyle(fontWeight: FontWeight.w600)),
+                          ),
+                        ),
+                      ],
+                    ),
+                  ],
                 ),
-                ActionChip(
-                  label: const Text('Emulador Android (10.0.2.2)'),
-                  onPressed: () => hostCtrl.text = 'http://10.0.2.2:9090',
-                ),
-              ],
-            ),
-          ],
+              ),
+            ],
+          ),
         ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.of(ctx).pop(),
-            child: const Text('Cancelar'),
-          ),
-          FilledButton(
-            onPressed: () async {
-              await ApiService.setServerHost(hostCtrl.text);
-              if (!ctx.mounted) return;
-              Navigator.of(ctx).pop();
-              setState(() {});
-            },
-            child: const Text('Guardar'),
-          ),
-        ],
       ),
     );
   }
@@ -417,7 +256,7 @@ class _LoginScreenState extends State<LoginScreen> {
             Expanded(child: Text(msg)),
           ],
         ),
-        backgroundColor: const Color(0xFFDC2626),
+        backgroundColor: const Color(0xFF8B3A3A),
         behavior: SnackBarBehavior.floating,
         shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
       ),
@@ -434,7 +273,10 @@ class _LoginScreenState extends State<LoginScreen> {
       body: SafeArea(
         child: Center(
           child: SingleChildScrollView(
-            padding: const EdgeInsets.all(24),
+            padding: EdgeInsets.symmetric(
+              horizontal: isWide ? 24 : 14,
+              vertical: isWide ? 24 : 16,
+            ),
             child: ConstrainedBox(
               constraints: BoxConstraints(maxWidth: isWide ? 980 : 460),
               child: Card(
@@ -450,11 +292,11 @@ class _LoginScreenState extends State<LoginScreen> {
                           crossAxisAlignment: CrossAxisAlignment.stretch,
                           children: [
                             Expanded(flex: 5, child: _buildBrandHeroPanel()),
-                            Expanded(flex: 6, child: _buildLoginFormPanel()),
+                            Expanded(flex: 6, child: _buildLoginFormPanel(isWide: true)),
                           ],
                         ),
                       )
-                    : _buildLoginFormPanel(),
+                    : _buildLoginFormPanel(isWide: false),
               ),
             ),
           ),
@@ -590,40 +432,33 @@ class _LoginScreenState extends State<LoginScreen> {
     );
   }
 
-  Widget _buildLoginFormPanel() {
+  Widget _buildLoginFormPanel({required bool isWide}) {
     return Container(
       color: Colors.white,
-      padding: const EdgeInsets.symmetric(horizontal: 36, vertical: 38),
+      padding: EdgeInsets.symmetric(
+        horizontal: isWide ? 36 : 22,
+        vertical: isWide ? 38 : 28,
+      ),
       child: Form(
         key: _formKey,
         child: Column(
           mainAxisAlignment: MainAxisAlignment.center,
           crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
-            Row(
-              mainAxisAlignment: MainAxisAlignment.spaceBetween,
-              children: [
-                Container(
-                  padding: const EdgeInsets.all(12),
-                  decoration: BoxDecoration(
-                    color: const Color(0xFF1E3A8A).withValues(alpha: 0.1),
-                    borderRadius: BorderRadius.circular(14),
-                  ),
-                  child: const Icon(
-                    Icons.account_balance_wallet_rounded,
-                    size: 32,
-                    color: Color(0xFF1E3A8A),
-                  ),
+            Align(
+              alignment: Alignment.centerLeft,
+              child: Container(
+                padding: const EdgeInsets.all(12),
+                decoration: BoxDecoration(
+                  color: const Color(0xFF1E3A8A).withValues(alpha: 0.1),
+                  borderRadius: BorderRadius.circular(14),
                 ),
-                TextButton.icon(
-                  onPressed: _showServerSettingsDialog,
-                  icon: const Icon(Icons.settings_ethernet_rounded, size: 16),
-                  label: Text(
-                    kIsWeb ? 'Web REST' : 'Móvil REST',
-                    style: const TextStyle(fontSize: 12),
-                  ),
+                child: const Icon(
+                  Icons.account_balance_wallet_rounded,
+                  size: 32,
+                  color: Color(0xFF1E3A8A),
                 ),
-              ],
+              ),
             ),
             const SizedBox(height: 20),
             const Text(
@@ -683,9 +518,9 @@ class _LoginScreenState extends State<LoginScreen> {
             FilledButton.icon(
               onPressed: _isLoading ? null : () => _initiateLogin(),
               style: FilledButton.styleFrom(
-                backgroundColor: const Color(0xFF1E3A8A),
+                backgroundColor: const Color(0xFF0F172A),
                 foregroundColor: Colors.white,
-                padding: const EdgeInsets.symmetric(vertical: 16),
+                padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 16),
                 shape: RoundedRectangleBorder(
                   borderRadius: BorderRadius.circular(14),
                 ),
@@ -699,13 +534,14 @@ class _LoginScreenState extends State<LoginScreen> {
                         strokeWidth: 2.2,
                       ),
                     )
-                  : const Icon(Icons.login_rounded),
+                  : const Icon(Icons.login_rounded, size: 20),
               label: Text(
                 _isLoading ? 'Verificando credenciales...' : 'Continuar con Verificación 2FA',
-                style: const TextStyle(fontSize: 15.5, fontWeight: FontWeight.w600),
+                textAlign: TextAlign.center,
+                style: const TextStyle(fontSize: 15, fontWeight: FontWeight.w600),
               ),
             ),
-            const SizedBox(height: 18),
+            const SizedBox(height: 16),
             OutlinedButton.icon(
               onPressed: _isLoading
                   ? null
@@ -717,13 +553,19 @@ class _LoginScreenState extends State<LoginScreen> {
                       );
                     },
               style: OutlinedButton.styleFrom(
-                padding: const EdgeInsets.symmetric(vertical: 14),
+                foregroundColor: const Color(0xFF0F172A),
+                side: const BorderSide(color: Color(0xFFCBD5E1)),
+                padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
                 shape: RoundedRectangleBorder(
                   borderRadius: BorderRadius.circular(14),
                 ),
               ),
               icon: const Icon(Icons.person_add_alt_1_rounded, size: 19),
-              label: const Text('¿Nuevo cliente? Aperturar Cuenta Digital'),
+              label: const Text(
+                '¿Nuevo cliente? Crear Cuenta',
+                textAlign: TextAlign.center,
+                style: TextStyle(fontSize: 14.5, fontWeight: FontWeight.w600),
+              ),
             ),
           ],
         ),

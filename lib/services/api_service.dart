@@ -23,20 +23,96 @@ class ApiResult<T> {
   });
 }
 
+class CatalogItem {
+  final int id;
+  final String nombre;
+  final String? codigoPostal;
+
+  const CatalogItem({
+    required this.id,
+    required this.nombre,
+    this.codigoPostal,
+  });
+
+  bool get isOtro => nombre.toLowerCase() == 'otro' || nombre.toLowerCase() == 'otra';
+
+  @override
+  bool operator ==(Object other) =>
+      identical(this, other) ||
+      other is CatalogItem && other.id == id && other.nombre == nombre;
+
+  @override
+  int get hashCode => Object.hash(id, nombre);
+}
+
 class ApiService {
   static const String _envApiHost = String.fromEnvironment(
     'API_BASE_URL',
     defaultValue: '',
   );
-  static String _customBaseHost = '';
   static void Function(String reason)? onSessionInvalidated;
   static DateTime _lastActivity = DateTime.now();
-  static const Duration sessionInactivityLimit = Duration(minutes: 25);
+  static DateTime _lastTokenRefresh = DateTime.now();
+  static const Duration sessionInactivityLimit = Duration(minutes: 5);
+  static const Duration _tokenRefreshInterval = Duration(minutes: 3);
 
-  /// Obtiene la URL base según la variable de entorno (Render), configuración manual o plataforma
+  // Tokens solo en memoria: al cerrar la app móvil o pestaña web caducan de inmediato
+  static String? _memoryAccessToken;
+  static String? _memoryRefreshToken;
+  static String? _memoryCorreo;
+
+  static String? get currentAccessToken => _memoryAccessToken;
+  static String? get currentCorreo => _memoryCorreo;
+
+  static bool needsTokenRefresh() {
+    return _memoryAccessToken != null &&
+        _memoryRefreshToken != null &&
+        DateTime.now().difference(_lastTokenRefresh) >= _tokenRefreshInterval;
+  }
+
+  /// Renueva silenciosamente el accessToken cuando el usuario está activo para no sacarlo
+  static Future<bool> refreshAccessToken() async {
+    if (_memoryCorreo == null || _memoryRefreshToken == null) return false;
+    try {
+      final response = await http
+          .post(
+            Uri.parse('$apiBaseUrl/auth/refresh'),
+            headers: const {
+              'Content-Type': 'application/json',
+              'Accept': 'application/json',
+            },
+            body: jsonEncode({
+              'correo': _memoryCorreo,
+              'refreshToken': _memoryRefreshToken,
+            }),
+          )
+          .timeout(const Duration(seconds: 8));
+      if (response.statusCode == 200) {
+        final body = _safeDecode(response.body);
+        final data = body['data'];
+        if (data is Map<String, dynamic> && data['accessToken'] != null) {
+          _memoryAccessToken = data['accessToken'].toString();
+          _lastTokenRefresh = DateTime.now();
+          return true;
+        }
+      }
+      if (response.statusCode == 401) {
+        await _checkSessionDisplaced(response);
+      }
+    } catch (_) {}
+    return false;
+  }
+
+  /// Obtiene la URL base según la variable de entorno (--dart-define=API_BASE_URL=...)
+  /// o la configuración por defecto de la plataforma (Web o Móvil Android)
   static String get baseHost {
-    if (_customBaseHost.isNotEmpty) return _customBaseHost;
-    if (_envApiHost.isNotEmpty) return _envApiHost;
+    if (_envApiHost.trim().isNotEmpty) {
+      var clean = _envApiHost.trim();
+      if (clean.endsWith('/')) {
+        clean = clean.substring(0, clean.length - 1);
+      }
+      return clean;
+    }
     if (kIsWeb) {
       return 'http://localhost:9090';
     }
@@ -46,23 +122,194 @@ class ApiService {
 
   static String get apiBaseUrl => '$baseHost/api/v1';
 
-  static Future<void> initServerHost() async {
-    final prefs = await SharedPreferences.getInstance();
-    final savedHost = prefs.getString('server_base_host');
-    if (savedHost != null && savedHost.trim().isNotEmpty) {
-      _customBaseHost = savedHost.trim();
+  /// Parsea una lista de elementos de catálogo ({id, nombre, codigoPostal?})
+  static List<CatalogItem> _parseCatalogList(dynamic data) {
+    if (data is! List) return [];
+    final items = <CatalogItem>[];
+    for (int i = 0; i < data.length; i++) {
+      final raw = data[i];
+      if (raw is Map<String, dynamic>) {
+        items.add(CatalogItem(
+          id: (raw['id'] as num?)?.toInt() ?? -(i + 1),
+          nombre: (raw['nombre'] ?? '').toString(),
+          codigoPostal: raw['codigoPostal']?.toString(),
+        ));
+      } else if (raw is String) {
+        items.add(CatalogItem(id: i + 1, nombre: raw));
+      }
     }
+    return items;
   }
 
-  static Future<void> setServerHost(String hostUrl) async {
-    var clean = hostUrl.trim();
-    if (clean.endsWith('/')) {
-      clean = clean.substring(0, clean.length - 1);
-    }
-    _customBaseHost = clean;
-    final prefs = await SharedPreferences.getInstance();
-    await prefs.setString('server_base_host', clean);
+  /// Obtiene el catálogo oficial de países desde el backend con fallback local
+  static Future<List<CatalogItem>> getPaises() async {
+    try {
+      final res = await http
+          .get(Uri.parse('$apiBaseUrl/catalogos/paises'))
+          .timeout(const Duration(seconds: 5));
+      if (res.statusCode == 200) {
+        final body = _safeDecode(res.body);
+        final parsed = _parseCatalogList(body['data']);
+        if (parsed.isNotEmpty) return parsed;
+      }
+    } catch (_) {}
+    const names = [
+      'México', 'Estados Unidos', 'Canadá', 'España', 'Argentina', 'Colombia',
+      'Brasil', 'Chile', 'Perú', 'Alemania', 'Francia', 'Italia', 'Reino Unido',
+      'Japón', 'China', 'Corea del Sur', 'Australia', 'Portugal', 'Países Bajos',
+      'Suiza', 'Suecia', 'Costa Rica', 'Panamá', 'Uruguay', 'Ecuador', 'Guatemala',
+      'India', 'Rusia', 'Turquía', 'Sudáfrica', 'Otro',
+    ];
+    return [
+      for (int i = 0; i < names.length; i++)
+        CatalogItem(id: names[i] == 'Otro' ? -1 : i + 1, nombre: names[i]),
+    ];
   }
+
+  /// Obtiene el catálogo oficial de ocupaciones desde el backend con fallback local
+  static Future<List<CatalogItem>> getOcupaciones() async {
+    try {
+      final res = await http
+          .get(Uri.parse('$apiBaseUrl/catalogos/ocupaciones'))
+          .timeout(const Duration(seconds: 5));
+      if (res.statusCode == 200) {
+        final body = _safeDecode(res.body);
+        final parsed = _parseCatalogList(body['data']);
+        if (parsed.isNotEmpty) return parsed;
+      }
+    } catch (_) {}
+    const names = [
+      'Ingeniería y Desarrollo de Software', 'Medicina y Servicios de Salud',
+      'Docencia y Educación', 'Contabilidad y Auditoría', 'Administración y Gestión Empresarial',
+      'Comercio y Ventas', 'Derecho y Servicios Jurídicos', 'Arquitectura y Construcción',
+      'Estudiante', 'Empleado Administrativo', 'Transporte y Logística', 'Hostelería y Turismo',
+      'Arte y Diseño Digital', 'Finanzas y Banca', 'Independiente / Emprendedor',
+      'Sector Agropecuario e Industrial', 'Servicios Generales y Mantenimiento',
+      'Investigación Científica', 'Otra',
+    ];
+    return [
+      for (int i = 0; i < names.length; i++)
+        CatalogItem(id: names[i] == 'Otra' ? -1 : i + 1, nombre: names[i]),
+    ];
+  }
+
+  /// Obtiene el catálogo de estados/entidades relacionado con un país
+  static Future<List<CatalogItem>> getEstados(int paisId) async {
+    if (paisId > 0) {
+      try {
+        final res = await http
+            .get(Uri.parse('$apiBaseUrl/catalogos/estados?paisId=$paisId'))
+            .timeout(const Duration(seconds: 5));
+        if (res.statusCode == 200) {
+          final body = _safeDecode(res.body);
+          final parsed = _parseCatalogList(body['data']);
+          if (parsed.isNotEmpty) return parsed;
+        }
+      } catch (_) {}
+    }
+    if (paisId == 1) {
+      const mxStates = [
+        'Aguascalientes', 'Baja California', 'Baja California Sur', 'Campeche',
+        'Chiapas', 'Chihuahua', 'Ciudad de México', 'Coahuila', 'Colima',
+        'Durango', 'Estado de México', 'Guanajuato', 'Guerrero', 'Hidalgo',
+        'Jalisco', 'Michoacán', 'Morelos', 'Nayarit', 'Nuevo León', 'Oaxaca',
+        'Puebla', 'Querétaro', 'Quintana Roo', 'San Luis Potosí', 'Sinaloa',
+        'Sonora', 'Tabasco', 'Tamaulipas', 'Tlaxcala', 'Veracruz', 'Yucatán',
+        'Zacatecas',
+      ];
+      return [
+        for (int i = 0; i < mxStates.length; i++)
+          CatalogItem(id: i + 1, nombre: mxStates[i]),
+        const CatalogItem(id: -1, nombre: 'Otro'),
+      ];
+    }
+    return const [CatalogItem(id: -1, nombre: 'Otro')];
+  }
+
+  /// Obtiene el catálogo de municipios/alcaldías relacionado con un estado
+  static Future<List<CatalogItem>> getMunicipios(int estadoId) async {
+    if (estadoId > 0) {
+      try {
+        final res = await http
+            .get(Uri.parse('$apiBaseUrl/catalogos/municipios?estadoId=$estadoId'))
+            .timeout(const Duration(seconds: 5));
+        if (res.statusCode == 200) {
+          final body = _safeDecode(res.body);
+          final parsed = _parseCatalogList(body['data']);
+          if (parsed.isNotEmpty) return parsed;
+        }
+      } catch (_) {}
+    }
+    if (estadoId == 12) {
+      const gtoMun = [
+        'Dolores Hidalgo', 'San Miguel de Allende', 'Guanajuato', 'León',
+        'Celaya', 'Irapuato', 'Salamanca', 'Silao', 'San Luis de la Paz',
+      ];
+      return [
+        for (int i = 0; i < gtoMun.length; i++)
+          CatalogItem(id: i + 1, nombre: gtoMun[i]),
+        const CatalogItem(id: -1, nombre: 'Otro'),
+      ];
+    }
+    return const [CatalogItem(id: -1, nombre: 'Otro')];
+  }
+
+  /// Obtiene el catálogo de colonias y comunidades relacionado con un municipio
+  static Future<List<CatalogItem>> getColonias(int municipioId) async {
+    if (municipioId > 0) {
+      try {
+        final res = await http
+            .get(Uri.parse('$apiBaseUrl/catalogos/colonias?municipioId=$municipioId'))
+            .timeout(const Duration(seconds: 5));
+        if (res.statusCode == 200) {
+          final body = _safeDecode(res.body);
+          final parsed = _parseCatalogList(body['data']);
+          if (parsed.isNotEmpty) return parsed;
+        }
+      } catch (_) {}
+    }
+    if (municipioId == 1) {
+      const dhItems = [
+        ('Centro', '37800'),
+        ('Lindavista', '37800'),
+        ('San Cristóbal', '37800'),
+        ('Guanajuato', '37800'),
+        ('Mariano Balleza', '37800'),
+        ('Todos Santos', '37800'),
+        ('Fraccionamiento Independencia', '37800'),
+        ('El Saucillo', '37848'),
+        ('Remátalo', '37830'),
+        ('Don Pedro', '37830'),
+        ('Xoconoxtle el Grande', '37830'),
+        ('Xoconoxtle el Chico', '37830'),
+        ('Río Laja', '37810'),
+        ('El Llanito', '37840'),
+        ('La Erre', '37842'),
+        ('Adjuntas del Río', '37814'),
+        ('La Ventilla', '37842'),
+        ('San Gabriel', '37817'),
+        ('El Gallinero', '37829'),
+        ('San Antón de las Minas', '37849'),
+        ('San Marcos de Abajo', '37848'),
+        ('San Marcos de Arriba', '37848'),
+        ('San Martín de Terreros', '37838'),
+        ('Peñuelitas', '37814'),
+        ('Santa Bárbara', '37832'),
+        ('Trancas', '37828'),
+        ('Tequisquiapan', '37814'),
+        ('Tierra Blanca', '37843'),
+        ('Zamarripa', '37825'),
+      ];
+      return [
+        for (int i = 0; i < dhItems.length; i++)
+          CatalogItem(id: i + 1, nombre: dhItems[i].$1, codigoPostal: dhItems[i].$2),
+        const CatalogItem(id: -1, nombre: 'Otra'),
+      ];
+    }
+    return const [CatalogItem(id: -1, nombre: 'Otra')];
+  }
+
+  static Future<void> initServerHost() async {}
 
   static void recordUserActivity() {
     _lastActivity = DateTime.now();
@@ -73,9 +320,8 @@ class ApiService {
   }
 
   static Future<Map<String, String>> _buildAuthHeaders({Map<String, String>? extra}) async {
-    final prefs = await SharedPreferences.getInstance();
-    final accessToken = prefs.getString('accessToken') ?? '';
-    final refreshToken = prefs.getString('refreshToken') ?? '';
+    final accessToken = _memoryAccessToken ?? '';
+    final refreshToken = _memoryRefreshToken ?? '';
     final headers = <String, String>{
       'Content-Type': 'application/json',
       'Accept': 'application/json',
@@ -240,11 +486,6 @@ class ApiService {
       final body = _safeDecode(response.body);
       if (response.statusCode == 200 && body['codigo'] == 0 && body['data'] != null) {
         final profile = UserProfileModel.fromJson(body['data'] as Map<String, dynamic>);
-        final prefs = await SharedPreferences.getInstance();
-        if (profile.cuentas.isNotEmpty) {
-          await prefs.setString('numeroCuenta', profile.cuentas.first.numeroCuenta);
-        }
-        await prefs.setString('nombreCompleto', profile.nombreCompleto);
         return ApiResult(
           success: true,
           message: 'Perfil actualizado',
@@ -506,6 +747,38 @@ class ApiService {
     }
   }
 
+  /// Verifica el PIN de seguridad de 4 dígitos contra el servidor
+  static Future<ApiResult<bool>> verificarPin(String pin) async {
+    try {
+      final headers = await _buildAuthHeaders();
+      final response = await http
+          .post(
+            Uri.parse('$apiBaseUrl/usuarios/verificar-pin'),
+            headers: headers,
+            body: jsonEncode({'pin': pin.trim()}),
+          )
+          .timeout(const Duration(seconds: 12));
+
+      if (response.statusCode == 200) {
+        return ApiResult(success: true, message: 'PIN verificado correctamente', data: true);
+      }
+      final body = _safeDecode(response.body);
+      return ApiResult(
+        success: false,
+        message: _extractErrorMessage(body, response.statusCode),
+        data: false,
+        statusCode: response.statusCode,
+      );
+    } catch (_) {
+      return ApiResult(
+        success: false,
+        message: 'No fue posible validar el PIN en el servidor.',
+        data: false,
+        statusCode: 503,
+      );
+    }
+  }
+
   /// Actualiza el PIN de seguridad de 4 dígitos
   static Future<ApiResult<String>> actualizarPin(String nuevoPin) async {
     try {
@@ -601,8 +874,7 @@ class ApiService {
   /// Cierra la sesión de manera segura tanto en el servidor (Redis + BD) como localmente
   static Future<void> logout() async {
     try {
-      final prefs = await SharedPreferences.getInstance();
-      final correo = prefs.getString('correo');
+      final correo = _memoryCorreo;
       final headers = await _buildAuthHeaders();
       await http
           .post(
@@ -619,38 +891,23 @@ class ApiService {
   }
 
   static Future<void> clearLocalSession() async {
+    _memoryAccessToken = null;
+    _memoryRefreshToken = null;
+    _memoryCorreo = null;
     final prefs = await SharedPreferences.getInstance();
-    final savedHost = prefs.getString('server_base_host');
     await prefs.clear();
-    if (savedHost != null) {
-      await prefs.setString('server_base_host', savedHost);
-    }
   }
 
   static Future<void> _persistSession(Map<String, dynamic> data, String correo) async {
-    final prefs = await SharedPreferences.getInstance();
-    if (data['accessToken'] != null) {
-      await prefs.setString('accessToken', data['accessToken'].toString());
-    }
-    if (data['refreshToken'] != null) {
-      await prefs.setString('refreshToken', data['refreshToken'].toString());
-    }
-    if (data['numeroCuenta'] != null) {
-      await prefs.setString('numeroCuenta', data['numeroCuenta'].toString());
-    }
-    if (data['nombreCompleto'] != null) {
-      await prefs.setString('nombreCompleto', data['nombreCompleto'].toString());
-    }
-    if (data['clienteId'] != null) {
-      await prefs.setInt('clienteId', (data['clienteId'] as num).toInt());
-    }
-    await prefs.setString('correo', correo);
-    await prefs.setInt('loginTimestamp', DateTime.now().millisecondsSinceEpoch);
+    _memoryAccessToken = data['accessToken']?.toString();
+    _memoryRefreshToken = data['refreshToken']?.toString();
+    _memoryCorreo = correo;
+    _lastActivity = DateTime.now();
+    _lastTokenRefresh = DateTime.now();
   }
 
   static Future<bool> hasActiveLocalSession() async {
-    final prefs = await SharedPreferences.getInstance();
-    final token = prefs.getString('accessToken');
+    final token = _memoryAccessToken;
     return token != null && token.isNotEmpty;
   }
 
@@ -662,11 +919,11 @@ class ApiService {
       if (onSessionInvalidated != null) {
         if (msg.contains('SESION_DESPLAZADA')) {
           onSessionInvalidated!(
-            'Se detectó un nuevo inicio de sesión con tu cuenta en otro dispositivo o navegador. Por seguridad, esta sesión ha sido cerrada.',
+            'Sesión cerrada: iniciaste sesión en otro dispositivo.',
           );
         } else {
           onSessionInvalidated!(
-            'Tu sesión ha expirado o fue cerrada. Por favor inicia sesión nuevamente.',
+            'Tu sesión expiró. Inicia sesión nuevamente.',
           );
         }
       }

@@ -56,10 +56,20 @@ class UserProfileModel {
 
   factory UserProfileModel.fromJson(Map<String, dynamic> json) {
     final rawCuentas = json['cuentas'] as List<dynamic>? ?? [];
+    final partesNombre = [
+      json['nombre']?.toString().trim() ?? '',
+      json['segundoNombre']?.toString().trim() ?? '',
+      json['apellidoPaterno']?.toString().trim() ?? '',
+      json['apellidoMaterno']?.toString().trim() ?? '',
+    ].where((s) => s.isNotEmpty).toList();
+    final fullName = partesNombre.isNotEmpty
+        ? partesNombre.join(' ')
+        : (json['nombreCompleto'] ?? '').toString().trim();
+
     return UserProfileModel(
       usuarioId: (json['usuarioId'] as num?)?.toInt() ?? 0,
       clienteId: (json['clienteId'] as num?)?.toInt() ?? 0,
-      nombreCompleto: (json['nombreCompleto'] ?? '').toString(),
+      nombreCompleto: fullName,
       correo: (json['correo'] ?? '').toString(),
       telefonoMovil: (json['telefonoMovil'] ?? '').toString(),
       rfc: (json['rfc'] ?? '').toString(),

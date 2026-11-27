@@ -43,7 +43,26 @@ class TransactionModel {
     this.completedAt,
   });
 
+  static const String _ipBlockedCode = '05';
+  static const String _ipBlockedMessage =
+      'Acceso denegado por GestoPago (Código 05): la dirección IP de origen no está autorizada para operar.';
+
+  static bool _isIpBlockError(String? code, String? message) {
+    if (code == '05' || code == '55') return true;
+    if (message == null || message.trim().isEmpty) return false;
+    final lower = message.toLowerCase();
+    return lower.contains('validationcompleted') ||
+        lower.contains('validips') ||
+        lower.contains('isvalid=false') ||
+        lower.contains('codigodispositivo=') ||
+        lower.contains('iddistribuidor=');
+  }
+
   factory TransactionModel.fromJson(Map<String, dynamic> json) {
+    final rawCode = json['providerCode']?.toString();
+    final rawMsg = json['providerMessage']?.toString();
+    final ipBlocked = _isIpBlockError(rawCode, rawMsg);
+
     return TransactionModel(
       operationId: (json['operationId'] ?? json['transactionId'] ?? '').toString(),
       upc: (json['upc'] ?? 'N/A').toString(),
@@ -57,8 +76,8 @@ class TransactionModel {
       telefono: json['telefono']?.toString(),
       referencia: json['referencia']?.toString(),
       numeroCuenta: json['numeroCuenta']?.toString(),
-      providerCode: json['providerCode']?.toString(),
-      providerMessage: json['providerMessage']?.toString(),
+      providerCode: ipBlocked ? _ipBlockedCode : rawCode,
+      providerMessage: ipBlocked ? _ipBlockedMessage : rawMsg,
       providerTransactionId: json['providerTransactionId']?.toString(),
       providerAuthorization: json['providerAuthorization']?.toString(),
       pin: json['pin']?.toString(),
